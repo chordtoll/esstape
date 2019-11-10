@@ -71,6 +71,7 @@ def tf(b):
 
 DO_GRAPH = False
 
+
 #Now we decode the blocks
 for j,(start,end) in enumerate(blocks):
     print("Decoding block %4d/%4d..."%(j,len(blocks)-1))
@@ -81,10 +82,16 @@ for j,(start,end) in enumerate(blocks):
     prevbit=-1
     samples=len(block)
     blkerror=False
-    for i in range(len(block)-1):
-        if abs(block[i])>5000 and dvt[i]*dvt[i+1]<=0:   #Check if we're at a peak (magnitude is high and derivative crossed zero)
+    for i in range(len(block)-8):
+        d1=block[i]-block[i-8]
+        d2=block[i]-block[i+8]
+        #To search for peaks, we check the derivative. If it crosses zero and the sample is larger than nearby samples, we've found a peak.
+        if (d1>0)==(d2>0) and abs(d1)>2000 and abs(d2)>2000 and dvt[i]*dvt[i+1]<=0:   #Check if we're at a peak
+            if DO_GRAPH: plt.plot(start+i,block[i],'x')
+            if DO_GRAPH: plt.plot(start+i-8,block[i-8],'4')
+            if DO_GRAPH: plt.plot(start+i+8,block[i+8],'3')
             if prevbit==-1: #If we're at our first bit,
-                zeropol=block[i]>0  #We know it's a zero. Save the direction for later.
+                zeropol=d1>0  #We know it's a zero. Save the direction for later.
                 prevbit=i   #Store the time
                 if DO_GRAPH: plt.axvline(start+i,color='red')   #Graph it! Red line for 0.
                 bits.append(False)  #Yep, that's a zero
@@ -99,7 +106,7 @@ for j,(start,end) in enumerate(blocks):
                 elif tslb<24: #If it's 8-24, it's our optional pulse
                     pass    #So we can ignore it
                 elif tslb<40: #If it's 24-40, we got a bit!
-                    bit=(block[i]>0)!=zeropol   #If its direction is different from our initial zero, it's a one!
+                    bit=(d1>0)!=zeropol   #If its direction is different from our initial zero, it's a one!
                     prevbit=i #Store its time
                     if DO_GRAPH: plt.axvline(start+i,color='green' if bit else 'red')   #Heck yeck we're makin' graphs
                     bits.append(bit) #Put that bit in the bucket
@@ -113,7 +120,6 @@ for j,(start,end) in enumerate(blocks):
                     break
 
     if DO_GRAPH: plt.show()
-
     if blkerror:    #include <yikes.h>
         print('FAILED TO DECODE. SKIPPING') #If the block's no good, throw it out
         continue
