@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import struct
 import time
-
+import pickle
 
 fs, data = wavfile.read(sys.argv[1])
 
@@ -16,31 +16,42 @@ WINDOW=10000
 
 state='IBG'
 
-blocks=[]
-print("Locating blocks...")
-i=WINDOW
-sumabs=sum(abs(data[:WINDOW]))  #We find blocks by calculating the average magnitude
-while True:
-    if i>=samples:
-        break
-    if i%10000==0:  #Make a status message every now and then
-        print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
-    if state=='IBG':
-        sumabs+=abs(data[i])
-        sumabs-=abs(data[i-WINDOW])
-        if sumabs>2500*WINDOW:  #If the average magnitude is above the threshold,
-            start=i-WINDOW          #Start of block. Add some extra on the start for good measure.
-            state='BLK'
+if not os.path.isfile(os.path.join("blockmaps",sys.argv[1]+'.map')):
+    blocks=[]
+    print("Locating blocks...")
+    i=WINDOW
+    sumabs=sum(abs(data[:WINDOW]))  #We find blocks by calculating the average magnitude
+    while True:
+        if i>=samples:
+            break
+        if i%10000==0:  #Make a status message every now and then
             print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
-    else:
-        sumabs+=abs(data[i])
-        sumabs-=abs(data[i-WINDOW])
-        if sumabs<2500*WINDOW:  #If the average magnitude is below the threshold,
-            end=i                   #End of block.
-            blocks.append([start,end])
-            state='IBG'
-            print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
-    i+=1
+        if state=='IBG':
+            sumabs+=abs(data[i])
+            sumabs-=abs(data[i-WINDOW])
+            if sumabs>2500*WINDOW:  #If the average magnitude is above the threshold,
+                start=i-WINDOW          #Start of block. Add some extra on the start for good measure.
+                state='BLK'
+                print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
+        else:
+            sumabs+=abs(data[i])
+            sumabs-=abs(data[i-WINDOW])
+            if sumabs<2500*WINDOW:  #If the average magnitude is below the threshold,
+                end=i                   #End of block.
+                blocks.append([start,end])
+                state='IBG'
+                print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
+        i+=1
+
+    if not os.path.isdir("blockmaps"):
+        os.mkdir("blockmaps")
+    with open(os.path.join("blockmaps",sys.argv[1]+'.map'),'wb') as f:
+        pickle.dump(blocks,f)
+else:
+    with open(os.path.join("blockmaps",sys.argv[1]+'.map'),'rb') as f:
+        blocks=pickle.load(f)
+
+
 print()           
 print()           
 print()           
