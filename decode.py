@@ -7,6 +7,7 @@ import numpy as np
 import struct
 import time
 import pickle
+import esscrc
 
 fs, data = wavfile.read(sys.argv[1])
 
@@ -15,6 +16,8 @@ samples=len(data)
 WINDOW=10000
 
 state='IBG'
+
+PROGRESS=False
 
 if not os.path.isfile(os.path.join("blockmaps",sys.argv[1]+'.map')):
     blocks=[]
@@ -25,14 +28,14 @@ if not os.path.isfile(os.path.join("blockmaps",sys.argv[1]+'.map')):
         if i>=samples:
             break
         if i%10000==0:  #Make a status message every now and then
-            print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
+            if PROGRESS: print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
         if state=='IBG':
             sumabs+=abs(data[i])
             sumabs-=abs(data[i-WINDOW])
             if sumabs>2500*WINDOW:  #If the average magnitude is above the threshold,
                 start=i-WINDOW          #Start of block. Add some extra on the start for good measure.
                 state='BLK'
-                print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
+                if PROGRESS: print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
         else:
             sumabs+=abs(data[i])
             sumabs-=abs(data[i-WINDOW])
@@ -40,7 +43,7 @@ if not os.path.isfile(os.path.join("blockmaps",sys.argv[1]+'.map')):
                 end=i                   #End of block.
                 blocks.append([start,end])
                 state='IBG'
-                print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
+                if PROGRESS: print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
         i+=1
 
     if not os.path.isdir("blockmaps"):
@@ -71,6 +74,7 @@ def tf(b):
 
 DO_GRAPH = False
 
+fails=[]
 
 #Now we decode the blocks
 for j,(start,end) in enumerate(blocks):
@@ -82,11 +86,12 @@ for j,(start,end) in enumerate(blocks):
     prevbit=-1
     samples=len(block)
     blkerror=False
+    BIT_THRESH=2000
     for i in range(len(block)-8):
-        d1=block[i]-block[i-8]
-        d2=block[i]-block[i+8]
+        d1=int(block[i])-int(block[i-8])
+        d2=int(block[i])-int(block[i+8])
         #To search for peaks, we check the derivative. If it crosses zero and the sample is larger than nearby samples, we've found a peak.
-        if (d1>0)==(d2>0) and abs(d1)>2000 and abs(d2)>2000 and dvt[i]*dvt[i+1]<=0:   #Check if we're at a peak
+        if (d1>0)==(d2>0) and abs(d1)>BIT_THRESH and abs(d2)>BIT_THRESH and dvt[i]*dvt[i+1]<=0:   #Check if we're at a peak
             if DO_GRAPH: plt.plot(start+i,block[i],'x')
             if DO_GRAPH: plt.plot(start+i-8,block[i-8],'4')
             if DO_GRAPH: plt.plot(start+i+8,block[i+8],'3')
@@ -110,7 +115,11 @@ for j,(start,end) in enumerate(blocks):
                     prevbit=i #Store its time
                     if DO_GRAPH: plt.axvline(start+i,color='green' if bit else 'red')   #Heck yeck we're makin' graphs
                     bits.append(bit) #Put that bit in the bucket
-                    print('\033[1G          %10d/%10d (%2d%%): %6d bits'%(i,samples,100*i/samples,len(bits)),end=' ',flush=True) #Tell our friend the user that we've got a live one
+                    if len(bits)>16 and len(bits)<13328:#This is sneaky
+                        BIT_THRESH=1000                     #Drop the threshold during the block
+                    else:
+                        BIT_THRESH=2000                     #Bring it back up at the header/footer
+                    if PROGRESS: print('\033[1G          %10d/%10d (%2d%%): %6d bits'%(i,samples,100*i/samples,len(bits)),end=' ',flush=True) #Tell our friend the user that we've got a live one
                     
                 else: #More than 40, things are wrong
                     print()
@@ -122,12 +131,17 @@ for j,(start,end) in enumerate(blocks):
     if DO_GRAPH: plt.show()
     if blkerror:    #include <yikes.h>
         print('FAILED TO DECODE. SKIPPING') #If the block's no good, throw it out
+        fails.append((j,start+i))
         continue
 
     print()
 
+    if len(bits)==13345: #If we catch a ghost bit,
+        bits=bits[:-1]     #Drop it. This is risky, but CRC
+
     if (len(bits)%16)!=0: #We need an integer number of words
         print('INCORRECT LENGTH. SKIPPING')
+        fails.append(j)
         continue
 
     preamble=decode(bits[:16],16) #Get those tasty fields out of the header
@@ -135,6 +149,8 @@ for j,(start,end) in enumerate(blocks):
     track=decode(bits[27:29],2)
     eof=bits[29]
     deof=bits[30]
+    crc=decode(bits[13312:13328],16)
+    ccrc=esscrc.compute_crc(bits[16:-32])
 
     print('    Header:') #Tell the user so they can celebrate!
     print('        Preamble: %04x'%preamble)
@@ -142,12 +158,24 @@ for j,(start,end) in enumerate(blocks):
     print('        Track   : %1x'%track)
     print('        EOF     : %s'%tf(eof))
     print('        DEOF    : %s'%tf(deof))
+    print('        CRC     : %04x'%crc)
+    print('    Computed CRC: %04x'%ccrc)
     print()
     print()
     print()
+
+    if crc!=ccrc:
+        print("CRC MISMATCH. SKIPPING")
+        input("Press enter to continue...")
+        continue
 
     if not os.path.isdir(str(track)): #Make a folder for the track
         os.mkdir(str(track))
     with open(os.path.join(str(track),'%04d.bin'%block),'wb') as f: #Write the block
         for i in range(0,len(bits),16):
             f.write(struct.pack('>H',decode(bits[i:i+16],16)))
+
+if fails:
+    print("Failed to decode blocks:")
+    for n,offs in fails:
+        print("\t%d @ %d"%(n,offs))
