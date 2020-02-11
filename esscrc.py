@@ -1,13 +1,27 @@
+def byte2bits(b):
+    return [1==(b>>i)&0x01 for i in range(8)][::-1]
+
 def chr2bits(c):
     return [1==(ord(c)>>i)&0x01 for i in range(8)][::-1]
 
 def short2bits(s):
     return [1==(s>>i)&0x01 for i in range(16)][::-1]
 
+def flip16(b):
+    for i in range(0,len(b),16):
+        b[i:i+16]=b[i:i+16:-1]
+    return b
+
 def str2bits(s):
     bits=[]
     for c in s:
         bits+=chr2bits(c)
+    return bits
+
+def bytes2bits(s):
+    bits=[]
+    for b in s:
+        bits+=byte2bits(b)
     return bits
 
 def poly2bits(p):
