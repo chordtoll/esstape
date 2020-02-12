@@ -17,7 +17,7 @@ WINDOW=10000
 
 state='IBG'
 
-PROGRESS=False
+PROGRESS=True
 
 if not os.path.isfile(os.path.join("blockmaps",sys.argv[1]+'.map')):
     blocks=[]
@@ -32,16 +32,18 @@ if not os.path.isfile(os.path.join("blockmaps",sys.argv[1]+'.map')):
         if state=='IBG':
             sumabs+=abs(data[i])
             sumabs-=abs(data[i-WINDOW])
-            if sumabs>2500*WINDOW:  #If the average magnitude is above the threshold,
+            if sumabs>2000*WINDOW:  #If the average magnitude is above the threshold,
                 start=i-WINDOW          #Start of block. Add some extra on the start for good measure.
                 state='BLK'
                 if PROGRESS: print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
         else:
             sumabs+=abs(data[i])
             sumabs-=abs(data[i-WINDOW])
-            if sumabs<2500*WINDOW:  #If the average magnitude is below the threshold,
+            if sumabs<500*WINDOW:  #If the average magnitude is below the threshold,
                 end=i                   #End of block.
                 blocks.append([start,end])
+                print()
+                print(start,end,end-start)
                 state='IBG'
                 if PROGRESS: print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
         i+=1
@@ -49,7 +51,7 @@ if not os.path.isfile(os.path.join("blockmaps",sys.argv[1]+'.map')):
     if not os.path.isdir("blockmaps"):
         os.mkdir("blockmaps")
     with open(os.path.join("blockmaps",sys.argv[1]+'.map'),'wb') as f:
-        pickle.dump(blocks,f)
+        pickle.dump(blocks,f,0)
 else:
     with open(os.path.join("blockmaps",sys.argv[1]+'.map'),'rb') as f:
         blocks=pickle.load(f)
@@ -80,27 +82,34 @@ fails=[]
 for j,(start,end) in enumerate(blocks):
     print("Decoding block %4d/%4d..."%(j,len(blocks)-1))
     bits=[]
+    if DO_GRAPH: end=start+15000
     block=data[start:end]
     dvt=np.convolve(block,[-1,-2,-4,4,2,1],'same') #This is a fancy derivative. Numbers are magic.
     if DO_GRAPH: plt.plot(range(start,end),block)
     prevbit=-1
     samples=len(block)
     blkerror=False
-    BIT_THRESH=2000
-    for i in range(len(block)-8):
+    BIT_THRESH=1000
+    zeropol=None
+    pl=[]
+    plx=[]
+    for i in range(20,len(block)-8):
         d1=int(block[i])-int(block[i-8])
         d2=int(block[i])-int(block[i+8])
+        pl.append(d1+d2)
+        plx.append(start+i)
         #To search for peaks, we check the derivative. If it crosses zero and the sample is larger than nearby samples, we've found a peak.
-        if (d1>0)==(d2>0) and abs(d1)>BIT_THRESH and abs(d2)>BIT_THRESH and dvt[i]*dvt[i+1]<=0:   #Check if we're at a peak
+        if (d1>0)==(d2>0) and abs(d1+d2)>1000 and dvt[i]*dvt[i+1]<=0:   #Check if we're at a peak
             if DO_GRAPH: plt.plot(start+i,block[i],'x')
             if DO_GRAPH: plt.plot(start+i-8,block[i-8],'4')
             if DO_GRAPH: plt.plot(start+i+8,block[i+8],'3')
             if prevbit==-1: #If we're at our first bit,
                 zeropol=d1>0  #We know it's a zero. Save the direction for later.
                 prevbit=i   #Store the time
-                if DO_GRAPH: plt.axvline(start+i,color='red')   #Graph it! Red line for 0.
+                if DO_GRAPH: plt.axvline(start+i,color='blue')   #Graph it! Red line for 0.
                 bits.append(False)  #Yep, that's a zero
-            else:
+                break   #We found the zero, time for a new strategy
+            '''else:
                 tslb=i-prevbit #See how long ago our last bit was
                 if tslb<8:  #If it's 0-8, yikes
                     if tslb>3:  #But 0-3 are probably fine
@@ -126,22 +135,52 @@ for j,(start,end) in enumerate(blocks):
                     print("  BITS CHANGING TOO SLOW - PERHAPS TAPE IS REVERSED?")
                     print("  tslb=%d at sample %d"%(tslb,start+i)) #Fun fact, a TSLB of 48 means the tape is probably backwards
                     blkerror=True
-                    break
+                    break'''
+    #if zeropol is None:
+    #    print(5/0)
+    plt.plot(plx,pl)
+    while True:
+        if (prevbit+48>(end-start)): break
+        dval=[]
+        yval=[]
+        for i in range(24,40):
+            d1=int(block[prevbit+i])-int(block[prevbit+i-8])
+            d2=int(block[prevbit+i])-int(block[prevbit+i+8])
+            ds=abs(d1+d2)
+            dval.append(ds)
+            yval.append(block[prevbit+i])
+        mpos=prevbit+24+dval.index(max(dval))
+        #if DO_GRAPH: plt.plot(start+mpos,block[mpos],'x')
+        #if DO_GRAPH: plt.plot(start+prevbit+24,block[prevbit+24],'4')
+        #if DO_GRAPH: plt.plot(start+prevbit+40,block[prevbit+40],'3')
+        
+        bit=((block[mpos]-block[mpos-8])>0)!=zeropol
 
+        if PROGRESS: print('\033[1G          %10d/%10d (%2d%%): %6d bits'%(mpos,samples,100*mpos/samples,len(bits)),end=' ',flush=True) #Tell our friend the user that we've got a live one
+
+        bits.append(bit)
+        if (len(bits)==13344): break
+        
+        if DO_GRAPH: plt.axvline(start+mpos,color='green' if bit else 'red')
+        
+        #if DO_GRAPH: plt.plot(range(start+prevbit+24,start+prevbit+40),dval)
+        prevbit=mpos
     if DO_GRAPH: plt.show()
+    
     if blkerror:    #include <yikes.h>
         print('FAILED TO DECODE. SKIPPING') #If the block's no good, throw it out
         fails.append((j,start+i))
         continue
 
     print()
+    print(len(bits))
 
     if len(bits)==13345: #If we catch a ghost bit,
         bits=bits[:-1]     #Drop it. This is risky, but CRC
 
     if (len(bits)%16)!=0: #We need an integer number of words
         print('INCORRECT LENGTH. SKIPPING')
-        fails.append(j)
+        fails.append((j,len(bits)))
         continue
 
     preamble=decode(bits[:16],16) #Get those tasty fields out of the header
@@ -166,7 +205,7 @@ for j,(start,end) in enumerate(blocks):
 
     if crc!=ccrc:
         print("CRC MISMATCH. SKIPPING")
-        input("Press enter to continue...")
+        #input("Press enter to continue...")
         continue
 
     if not os.path.isdir(str(track)): #Make a folder for the track
