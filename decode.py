@@ -48,12 +48,10 @@ if not os.path.isfile(os.path.join("blockmaps",sys.argv[1]+'.map')):
                 if PROGRESS: print('\033[1G    [%s] %10d/%10d (%2d%%): %6d blocks'%(state,i,samples,100*i/samples,len(blocks)),end=' ',flush=True)
         i+=1
 
-    if not os.path.isdir("blockmaps"):
-        os.mkdir("blockmaps")
-    with open(os.path.join("blockmaps",sys.argv[1]+'.map'),'wb') as f:
+    with open(sys.argv[1]+'.map','wb') as f:
         pickle.dump(blocks,f,0)
 else:
-    with open(os.path.join("blockmaps",sys.argv[1]+'.map'),'rb') as f:
+    with open(sys.argv[1]+'.map','rb') as f:
         blocks=pickle.load(f)
 
 
@@ -99,7 +97,7 @@ for j,(start,end) in enumerate(blocks):
         pl.append(d1+d2)
         plx.append(start+i)
         #To search for peaks, we check the derivative. If it crosses zero and the sample is larger than nearby samples, we've found a peak.
-        if (d1>0)==(d2>0) and abs(d1+d2)>1000 and dvt[i]*dvt[i+1]<=0:   #Check if we're at a peak
+        if (d1>0)==(d2>0) and abs(d1+d2)>5000 and dvt[i]*dvt[i+1]<=0:   #Check if we're at a peak
             if DO_GRAPH: plt.plot(start+i,block[i],'x')
             if DO_GRAPH: plt.plot(start+i-8,block[i-8],'4')
             if DO_GRAPH: plt.plot(start+i+8,block[i+8],'3')
